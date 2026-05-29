@@ -1,0 +1,571 @@
+import { useState, useEffect, useRef } from "react";
+
+const SYSTEM_PROMPT = `# IDENTIDADE E PAPEL
+Você é **Recep**, um agente de receção virtual inteligente e profissional. Representa a empresa com excelência, sendo o primeiro ponto de contacto para visitantes, clientes, fornecedores e colaboradores internos.
+
+Comportamento obrigatório:
+- Cordialidade e simpatia genuínas
+- Comunicação clara, objetiva e profissional
+- Dinamismo e proatividade
+- Responsabilidade e discrição absoluta com dados confidenciais
+- Linguagem formal-cordial (nem rígida, nem casual)
+
+# DETEÇÃO DE IDIOMA
+Identifique automaticamente o idioma do utilizador e responda SEMPRE no mesmo idioma. Idiomas suportados: Português, Inglês, Espanhol, Francês, Alemão, Italiano e outros. Inglês é o fallback universal.
+
+# FUNÇÕES PRINCIPAIS
+
+## 1. ATENDIMENTO AO CLIENTE
+Receba visitantes, clientes e fornecedores com simpatia. Direcione para o departamento correto. Para encaminhamentos use este formato:
+[ENCAMINHAMENTO] De: / Para: / Assunto: / Mensagem: / Prioridade: Alta|Normal|Baixa / Data-Hora
+
+## 2. CORRESPONDÊNCIA E ENTREGAS
+Classifique: Interna / Externa / Confidencial / Urgente. Para envio oficial, crie ticket:
+[TICKET #ID] Tipo / Solicitante / Destinatário / Descrição / Prazo / Grupo responsável / Estado: ABERTO
+
+## 3. APOIO ADMINISTRATIVO
+- Agendamento de reuniões: [REUNIÃO] Assunto / Data-Hora / Local-Link / Participantes / Pauta
+- Preparação e arquivo de documentos
+- Manutenção de registos
+
+## 4. GESTÃO DE AGENDA
+Consulte disponibilidades, confirme compromissos, sugira alternativas em conflitos, registe cancelamentos.
+
+## 5. ORGANIZAÇÃO DE EVENTOS
+Tipos: reuniões, workshops, formações, conferências, visitas técnicas.
+[FICHA DE EVENTO] Nome / Tipo / Data / Local / Responsável / Participantes / Logística / Estado
+
+## 6. APOIO INTERDEPARTAMENTAL
+Entrevistas (RH), eventos, organização documental. Responda com agilidade e registe cada solicitação.
+
+## 7. CONFIDENCIALIDADE
+NUNCA partilhe dados pessoais sem autorização. Dados [CONFIDENCIAL] com máxima discrição.
+
+# REGRAS
+1. Sempre educado/a, mesmo em tensão ou reclamação
+2. Nunca deixe solicitação sem resposta — encaminhe se necessário
+3. 🔴 URGENTE para situações críticas
+4. Confirme entendimento antes de ações críticas
+5. Apresente sempre próximo passo claro
+
+# FORMATO DE RESPOSTA
+Use emojis funcionais para estruturar (✅ ação, 📋 detalhes, ➡️ próximo passo, 📎 referência). Seja conciso e profissional.
+
+# APRESENTAÇÃO INICIAL
+Apresente-se apenas na primeira mensagem: "Bom dia! 👋 Sou o Recep, o assistente virtual de receção. Estou aqui para ajudar com atendimento, agendamentos, correspondência, eventos e muito mais. Como posso ajudá-lo/a hoje?" (adapte saudação ao horário e idioma detetado)`;
+
+const LANGUAGES = ["PT", "EN", "ES", "FR", "DE", "IT"];
+
+const getGreeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+};
+
+const TicketBadge = ({ text }) => {
+  const isTicket = text.includes("[TICKET");
+  const isEvent = text.includes("[FICHA DE EVENTO]");
+  const isMeeting = text.includes("[REUNIÃO");
+  const isForward = text.includes("[ENCAMINHAMENTO]");
+  const isUrgent = text.includes("🔴 URGENTE");
+
+  if (!isTicket && !isEvent && !isMeeting && !isForward && !isUrgent) return null;
+
+  const type = isTicket ? "TICKET" : isEvent ? "EVENTO" : isMeeting ? "REUNIÃO" : isForward ? "ENCAMINHAMENTO" : "URGENTE";
+  const colors = {
+    TICKET: "#e8f4fd border-[#3a9bd5]",
+    EVENTO: "#f0f9f0 border-[#4caf7d]",
+    "REUNIÃO": "#fdf8e8 border-[#d4a017]",
+    ENCAMINHAMENTO: "#f5f0ff border-[#7c5cbf]",
+    URGENTE: "#fef0f0 border-[#e53e3e]",
+  };
+
+  return (
+    <span style={{
+      display: "inline-block",
+      fontSize: "10px",
+      fontWeight: 700,
+      letterSpacing: "0.08em",
+      padding: "2px 8px",
+      borderRadius: "4px",
+      border: "1px solid",
+      marginBottom: "6px",
+      backgroundColor: colors[type]?.split(" ")[0] || "#f5f5f5",
+      borderColor: colors[type]?.split("border-[")[1]?.replace("]", "") || "#ccc",
+      color: "#444",
+      fontFamily: "monospace",
+    }}>
+      {type}
+    </span>
+  );
+};
+
+const MessageBubble = ({ msg, isNew }) => {
+  const isUser = msg.role === "user";
+  const lines = msg.content.split("\n");
+
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: isUser ? "flex-end" : "flex-start",
+      marginBottom: "16px",
+      animation: isNew ? "fadeSlideIn 0.35s ease forwards" : "none",
+      opacity: isNew ? 0 : 1,
+    }}>
+      {!isUser && (
+        <div style={{
+          width: "36px", height: "36px", borderRadius: "50%",
+          background: "linear-gradient(135deg, #1a3a5c, #2d6a9f)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0, marginRight: "10px", marginTop: "2px",
+          boxShadow: "0 2px 8px rgba(26,58,92,0.3)",
+          fontSize: "16px",
+        }}>
+          🎩
+        </div>
+      )}
+      <div style={{
+        maxWidth: "72%",
+        background: isUser
+          ? "linear-gradient(135deg, #1a3a5c, #2d6a9f)"
+          : "#ffffff",
+        color: isUser ? "#fff" : "#1a2332",
+        borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+        padding: "12px 16px",
+        boxShadow: isUser
+          ? "0 4px 14px rgba(26,58,92,0.25)"
+          : "0 2px 12px rgba(0,0,0,0.08)",
+        border: isUser ? "none" : "1px solid #e8eef5",
+        fontSize: "14px",
+        lineHeight: "1.65",
+      }}>
+        {!isUser && <TicketBadge text={msg.content} />}
+        {lines.map((line, i) => {
+          const isCode = line.startsWith("[") && line.includes("]");
+          return (
+            <p key={i} style={{
+              margin: i === 0 ? 0 : "6px 0 0 0",
+              fontFamily: isCode ? "'Courier New', monospace" : "inherit",
+              fontSize: isCode ? "12px" : "14px",
+              color: isCode ? (isUser ? "#b8d4f0" : "#2d6a9f") : "inherit",
+              fontWeight: isCode ? 600 : "normal",
+              backgroundColor: isCode ? (isUser ? "rgba(255,255,255,0.1)" : "#f0f6ff") : "transparent",
+              padding: isCode ? "2px 6px" : 0,
+              borderRadius: isCode ? "4px" : 0,
+            }}>
+              {line || "\u00A0"}
+            </p>
+          );
+        })}
+        <div style={{
+          fontSize: "10px",
+          color: isUser ? "rgba(255,255,255,0.6)" : "#9aabb8",
+          marginTop: "6px",
+          textAlign: "right",
+        }}>
+          {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </div>
+      </div>
+      {isUser && (
+        <div style={{
+          width: "36px", height: "36px", borderRadius: "50%",
+          background: "linear-gradient(135deg, #e8f0f8, #c5d8ed)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0, marginLeft: "10px", marginTop: "2px",
+          fontSize: "16px",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
+        }}>
+          👤
+        </div>
+      )}
+    </div>
+  );
+};
+
+const QuickAction = ({ icon, label, onClick }) => (
+  <button
+    onClick={onClick}
+    style={{
+      background: "rgba(255,255,255,0.85)",
+      border: "1px solid #dde8f5",
+      borderRadius: "10px",
+      padding: "8px 14px",
+      fontSize: "12px",
+      color: "#1a3a5c",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      fontFamily: "inherit",
+      fontWeight: 500,
+      transition: "all 0.2s ease",
+      backdropFilter: "blur(4px)",
+      whiteSpace: "nowrap",
+    }}
+    onMouseEnter={e => {
+      e.target.style.background = "#1a3a5c";
+      e.target.style.color = "#fff";
+      e.target.style.borderColor = "#1a3a5c";
+    }}
+    onMouseLeave={e => {
+      e.target.style.background = "rgba(255,255,255,0.85)";
+      e.target.style.color = "#1a3a5c";
+      e.target.style.borderColor = "#dde8f5";
+    }}
+  >
+    <span>{icon}</span> {label}
+  </button>
+);
+
+export default function RecepAgent() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [showKeyInput, setShowKeyInput] = useState(true);
+  const [selectedLang, setSelectedLang] = useState("PT");
+  const [newMsgIndex, setNewMsgIndex] = useState(null);
+  const [ticketCount, setTicketCount] = useState(0);
+  const bottomRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  const quickActions = [
+    { icon: "📅", label: "Agendar Reunião", text: "Quero agendar uma reunião." },
+    { icon: "📦", label: "Registar Entrega", text: "Recebi uma entrega para registar." },
+    { icon: "📨", label: "Encaminhar Mensagem", text: "Preciso encaminhar uma mensagem urgente." },
+    { icon: "🎪", label: "Organizar Evento", text: "Preciso organizar um evento interno." },
+    { icon: "📋", label: "Abrir Ticket", text: "Quero abrir um ticket de solicitação." },
+    { icon: "🤝", label: "Visita Técnica", text: "Há uma visita técnica de fornecedor a registar." },
+  ];
+
+  const sendMessage = async (customText) => {
+    const text = customText || input.trim();
+    if (!text || loading) return;
+    if (!apiKey) { setShowKeyInput(true); return; }
+
+    const userMsg = { role: "user", content: text, timestamp: Date.now() };
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: SYSTEM_PROMPT,
+          messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      const data = await res.json();
+      const reply = data.content?.[0]?.text || "Desculpe, ocorreu um erro. Tente novamente.";
+
+      if (reply.includes("[TICKET")) setTicketCount(p => p + 1);
+
+      const assistantMsg = { role: "assistant", content: reply, timestamp: Date.now() };
+      setMessages(prev => {
+        const next = [...prev, assistantMsg];
+        setNewMsgIndex(next.length - 1);
+        return next;
+      });
+    } catch {
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: "⚠️ Erro de ligação. Verifique a sua chave API e tente novamente.",
+        timestamp: Date.now(),
+      }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(160deg, #0d1f35 0%, #1a3a5c 40%, #0d2b4a 100%)",
+      display: "flex",
+      flexDirection: "column",
+      fontFamily: "'Georgia', 'Times New Roman', serif",
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      <style>{`
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.2); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0px) rotate(0deg); }
+          50% { transform: translateY(-12px) rotate(3deg); }
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+        textarea { resize: none; outline: none; }
+        textarea::placeholder { color: #8fa8c0; }
+      `}</style>
+
+      {/* Decorative BG circles */}
+      <div style={{ position: "absolute", top: "-80px", right: "-80px", width: "300px", height: "300px", borderRadius: "50%", background: "rgba(45,106,159,0.15)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: "-60px", left: "-60px", width: "200px", height: "200px", borderRadius: "50%", background: "rgba(45,106,159,0.1)", pointerEvents: "none" }} />
+
+      {/* HEADER */}
+      <div style={{
+        background: "rgba(13,31,53,0.8)",
+        backdropFilter: "blur(20px)",
+        borderBottom: "1px solid rgba(255,255,255,0.08)",
+        padding: "0 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        height: "70px",
+        flexShrink: 0,
+        zIndex: 10,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+          <div style={{
+            width: "44px", height: "44px", borderRadius: "12px",
+            background: "linear-gradient(135deg, #2d6a9f, #1a3a5c)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "22px", boxShadow: "0 4px 14px rgba(45,106,159,0.5)",
+            border: "1px solid rgba(255,255,255,0.1)",
+          }}>🎩</div>
+          <div>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "#fff", letterSpacing: "0.04em" }}>
+              RECEP
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#4caf7d", animation: "pulse 2s infinite" }} />
+              <span style={{ fontSize: "11px", color: "#7aa8cc", letterSpacing: "0.06em" }}>AGENTE DE RECEÇÃO VIRTUAL</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          {ticketCount > 0 && (
+            <div style={{
+              background: "rgba(76,175,125,0.2)", border: "1px solid rgba(76,175,125,0.4)",
+              borderRadius: "8px", padding: "4px 12px", color: "#7dd4a8", fontSize: "12px", fontWeight: 600,
+            }}>
+              {ticketCount} ticket{ticketCount > 1 ? "s" : ""}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: "4px" }}>
+            {LANGUAGES.map(l => (
+              <button key={l} onClick={() => setSelectedLang(l)} style={{
+                background: selectedLang === l ? "rgba(45,106,159,0.6)" : "transparent",
+                border: selectedLang === l ? "1px solid rgba(255,255,255,0.3)" : "1px solid transparent",
+                borderRadius: "6px", padding: "3px 8px", color: selectedLang === l ? "#fff" : "#5a8ab0",
+                fontSize: "11px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, letterSpacing: "0.05em",
+                transition: "all 0.2s",
+              }}>{l}</button>
+            ))}
+          </div>
+          <button onClick={() => setShowKeyInput(p => !p)} style={{
+            background: showKeyInput ? "rgba(45,106,159,0.5)" : "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.15)", borderRadius: "8px",
+            padding: "6px 12px", color: "#b8d0e8", fontSize: "12px", cursor: "pointer",
+            fontFamily: "inherit", transition: "all 0.2s",
+          }}>
+            🔑 API Key {apiKey ? "✓" : "!"}
+          </button>
+        </div>
+      </div>
+
+      {/* API KEY PANEL */}
+      {showKeyInput && (
+        <div style={{
+          background: "rgba(13,31,53,0.95)", backdropFilter: "blur(20px)",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          padding: "16px 24px", display: "flex", alignItems: "center", gap: "12px",
+          animation: "fadeSlideIn 0.25s ease",
+        }}>
+          <span style={{ color: "#7aa8cc", fontSize: "13px", whiteSpace: "nowrap" }}>🔑 Anthropic API Key:</span>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            placeholder="sk-ant-..."
+            style={{
+              flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: "8px", padding: "8px 14px", color: "#fff", fontSize: "13px",
+              fontFamily: "monospace", outline: "none",
+            }}
+          />
+          <button onClick={() => setShowKeyInput(false)} style={{
+            background: "linear-gradient(135deg, #2d6a9f, #1a3a5c)",
+            border: "none", borderRadius: "8px", padding: "8px 18px",
+            color: "#fff", fontSize: "13px", cursor: "pointer", fontWeight: 600,
+          }}>Confirmar</button>
+          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" style={{
+            color: "#5a8ab0", fontSize: "11px", textDecoration: "none", whiteSpace: "nowrap",
+          }}>Obter key gratuita →</a>
+        </div>
+      )}
+
+      {/* MESSAGES AREA */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column" }}>
+        {messages.length === 0 && (
+          <div style={{
+            flex: 1, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: "20px",
+            animation: "fadeSlideIn 0.5s ease",
+          }}>
+            <div style={{ fontSize: "72px", animation: "float 4s ease-in-out infinite" }}>🎩</div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "28px", fontWeight: 700, color: "#fff", marginBottom: "8px" }}>
+                {getGreeting()}!
+              </div>
+              <div style={{ fontSize: "15px", color: "#7aa8cc", maxWidth: "380px", lineHeight: 1.6 }}>
+                Sou o <strong style={{ color: "#b8d0e8" }}>Recep</strong>, o seu assistente de receção virtual.
+                Como posso ajudá-lo/a hoje?
+              </div>
+            </div>
+            <div style={{
+              display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px",
+              width: "100%", maxWidth: "520px",
+            }}>
+              {quickActions.map((a, i) => (
+                <button key={i} onClick={() => sendMessage(a.text)} style={{
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "12px", padding: "14px 16px", color: "#c8ddf0",
+                  cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                  fontSize: "13px", transition: "all 0.2s",
+                  display: "flex", alignItems: "center", gap: "10px",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "rgba(45,106,159,0.3)"; e.currentTarget.style.borderColor = "rgba(45,106,159,0.6)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
+                >
+                  <span style={{ fontSize: "20px" }}>{a.icon}</span>
+                  <span>{a.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages.map((msg, i) => (
+          <MessageBubble key={i} msg={msg} isNew={i === newMsgIndex} />
+        ))}
+
+        {loading && (
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", animation: "fadeSlideIn 0.3s ease" }}>
+            <div style={{
+              width: "36px", height: "36px", borderRadius: "50%",
+              background: "linear-gradient(135deg, #1a3a5c, #2d6a9f)",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px",
+            }}>🎩</div>
+            <div style={{
+              background: "#fff", borderRadius: "18px 18px 18px 4px",
+              padding: "14px 18px", display: "flex", gap: "5px", alignItems: "center",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.08)", border: "1px solid #e8eef5",
+            }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{
+                  width: "7px", height: "7px", borderRadius: "50%", background: "#2d6a9f",
+                  animation: `pulse 1.2s ease ${i * 0.2}s infinite`,
+                }} />
+              ))}
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* QUICK ACTIONS BAR */}
+      {messages.length > 0 && (
+        <div style={{
+          padding: "8px 24px 0", overflowX: "auto",
+          display: "flex", gap: "8px", flexShrink: 0,
+        }}>
+          {quickActions.map((a, i) => (
+            <QuickAction key={i} icon={a.icon} label={a.label} onClick={() => sendMessage(a.text)} />
+          ))}
+        </div>
+      )}
+
+      {/* INPUT AREA */}
+      <div style={{
+        padding: "16px 24px 24px",
+        background: "rgba(13,31,53,0.6)", backdropFilter: "blur(20px)",
+        borderTop: "1px solid rgba(255,255,255,0.06)", flexShrink: 0,
+      }}>
+        <div style={{
+          display: "flex", gap: "12px", alignItems: "flex-end",
+          background: "rgba(255,255,255,0.07)", borderRadius: "16px",
+          border: "1px solid rgba(255,255,255,0.12)", padding: "12px 16px",
+          transition: "border-color 0.2s",
+        }}
+          onFocus={() => {}}
+        >
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Escreva a sua mensagem... (Enter para enviar)"
+            rows={1}
+            style={{
+              flex: 1, background: "transparent", border: "none",
+              color: "#e8f0f8", fontSize: "14px", fontFamily: "inherit",
+              lineHeight: "1.6", maxHeight: "120px", overflowY: "auto",
+            }}
+            onInput={e => {
+              e.target.style.height = "auto";
+              e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+            }}
+          />
+          <button
+            onClick={() => sendMessage()}
+            disabled={!input.trim() || loading}
+            style={{
+              width: "42px", height: "42px", borderRadius: "12px", border: "none",
+              background: input.trim() && !loading
+                ? "linear-gradient(135deg, #2d6a9f, #1a3a5c)"
+                : "rgba(255,255,255,0.1)",
+              color: input.trim() && !loading ? "#fff" : "#4a6a8a",
+              cursor: input.trim() && !loading ? "pointer" : "default",
+              fontSize: "18px", display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all 0.2s", flexShrink: 0,
+              boxShadow: input.trim() && !loading ? "0 4px 14px rgba(45,106,159,0.4)" : "none",
+            }}
+          >
+            {loading ? "⏳" : "➤"}
+          </button>
+        </div>
+        <div style={{ textAlign: "center", marginTop: "10px", fontSize: "10px", color: "#3a5a7a", letterSpacing: "0.06em" }}>
+          RECEP © {new Date().getFullYear()} · POWERED BY CLAUDE · DADOS PROTEGIDOS · SHIFT+ENTER PARA NOVA LINHA
+        </div>
+      </div>
+    </div>
+  );
+}
